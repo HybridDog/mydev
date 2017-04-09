@@ -385,6 +385,74 @@ local function cft(pos)
 	vmst(manip, pos)
 end
 
+
+local TIME = 1
+
+local clock = minetest.get_us_time
+local us = TIME * 1000000
+local function benchmark_function(fct, ...)
+	local start = clock()
+	local fin = start
+	local total = 0
+	while fin - start < us do
+		fct(...)
+
+		total = total + 1
+		fin = clock()
+	end
+	return total * 1000000 / (fin - start)
+end
+
+--~ local function hasho(pos)
+	--~ return (pos.z+32768)*65536*65536 + (pos.y+32768)*65536 + pos.x+32768
+--~ end
+--~ local function hashn(pos)
+	--~ return bit.lshift(bit.lshift(pos.z + 0x8000, 16) + pos.y + 0x8000, 16)
+			--~ + pos.x + 0x8000
+--~ end
+local function hasho(hash)
+	local pos = {}
+	pos.x = (hash%65536) - 32768
+	hash = math.floor(hash/65536)
+	pos.y = (hash%65536) - 32768
+	hash = math.floor(hash/65536)
+	pos.z = (hash%65536) - 32768
+	return pos
+end
+
+local function hashn(hash)
+	return {
+		x = bit.band(hash, 0xffff) - 0x8000,
+		y = bit.band(bit.rshift(hash, 16), 0xffff) - 0x8000,
+		z = bit.band(bit.rshift(hash, 32), 0xffff) - 0x8000
+	}
+end
+
+local cnt = 1000
+local function enhtst()
+	local maxv = 0xffffffffffff
+	local ps = {}
+	for i = 1,cnt do
+		ps[i] = math.random(0, maxv)
+		--~ ps[i] = {
+			--~ x = math.random(-1000,1000),
+			--~ y = math.random(-1000,1000),
+			--~ z = math.random(-1000,1000)
+		--~ }
+	end
+	print("old", benchmark_function(function()
+		for i = 1,cnt do
+			hasho(ps[i])
+		end
+	end))
+	print("new", benchmark_function(function()
+		for i = 1,cnt do
+			hashn(ps[i])
+		end
+	end))
+
+end
+
 minetest.override_item("default:wood", {
-	on_construct = cft
+	on_construct = enhtst
 })
