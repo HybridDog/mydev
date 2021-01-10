@@ -2,6 +2,16 @@ local common = mydev.common
 local hash2 = common.hash2
 local unhash2 = common.unhash2
 
+-- Probability for shrinking the walls in one step given that the movement was
+-- not straight upwards
+local shrink_probability = 0.4
+-- (Small integer) weights for choosing the straight upwards direction (+0),
+-- going to the side (-x, +x, -z, +z), and diagonally (-x-z, +x-z, -x+z, +x+z)
+local step_length_weights = {4 / 4, 2, 1}
+-- Radius bounds for the initial wall
+local rmin = 8
+local rmax = 14
+
 local function test()
 	local hashes = {}
 	for x = -1, 1 do
@@ -40,7 +50,6 @@ local offset_steps = {}
 do
 	-- Calculate a table with offsets and repeat some of them to encode the
 	-- probabilities
-	local step_length_weights = {4 / 4, 2, 1}
 	for x = -1, 1 do
 		for z = -1, 1 do
 			local step_length = math.abs(x) + math.abs(z)
@@ -88,7 +97,7 @@ end
 
 local function haufnhaus(pos)
 	print("Generating a haufnhaus at " .. dump(pos))
-	local fundament = common.get_perlin_field(8, 14)
+	local fundament = common.get_perlin_field(rmin, rmax)
 	local occupancy = {}
 	for _, v in pairs(fundament) do
 		occupancy[hash2(v[1], v[2])] = 1
@@ -103,7 +112,7 @@ local function haufnhaus(pos)
 	local prand = math.random()
 	for _ = 1, 245 do
 		local offset = offset_steps[math.random(#offset_steps)]
-		local do_shrink = offset ~= 0 and prand > 0.6
+		local do_shrink = offset ~= 0 and prand < shrink_probability
 		prand = (prand + 0.6180339887) % 1.0
 		occupancy = get_next_occupancy(occupancy, offset, do_shrink)
 		if not next(occupancy) then
