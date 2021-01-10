@@ -1,1 +1,3 @@
 default
+worldedit_commands?
+vector_extras?
