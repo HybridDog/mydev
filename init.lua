@@ -1,11 +1,14 @@
 local path = minetest.get_modpath("mydev")
 local datastructures = dofile(path .. "/datastructures.lua")
 local common = dofile(path .. "/common.lua")
+local spline_voxelizing = dofile(path .. "/spline_voxelizing.lua")
 
-mydev = {common = common, datastructures = datastructures}
+mydev = {common = common, datastructures = datastructures,
+	spline_voxelizing = spline_voxelizing}
 dofile(path .. "/haufnhaus.lua")
 dofile(path .. "/burgr.lua")
 dofile(path .. "/trianglesphere.lua")
+dofile(path .. "/splinetests.lua")
 
 
 -----------------------  -------------------------------------------------------
