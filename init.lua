@@ -5,6 +5,7 @@ local spline_voxelizing = dofile(path .. "/spline_voxelizing.lua")
 
 mydev = {common = common, datastructures = datastructures,
 	spline_voxelizing = spline_voxelizing}
+mydev.fill_sf = dofile(path .. "/fill_sf.lua")
 dofile(path .. "/haufnhaus.lua")
 dofile(path .. "/burgr.lua")
 dofile(path .. "/trianglesphere.lua")
@@ -64,5 +65,3 @@ minetest.override_item("default:wood", {
         --~ ]])
     --~ end,
 --~ })
-
-

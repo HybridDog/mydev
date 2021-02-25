@@ -1,6 +1,8 @@
+local flood_sf = mydev.fill_sf.flood
 local common = mydev.common
 local hash2 = common.hash2
 local unhash2 = common.unhash2
+local simple_vmanip = common.simple_vmanip
 
 -- Probability for shrinking the walls in one step given that the movement was
 -- not straight upwards
@@ -121,14 +123,45 @@ local function haufnhaus(pos)
 		occupancies[#occupancies+1] = occupancy
 	end
 	for i = 1, #occupancies do
-		local inner_node = (i > 1 and i < #occupancies) and "air" or "default:stone"
-		local wall_node = "default:dirt"
+		local occ_to_node = {
+			"air",  -- default inner node
+			"default:dirt",  -- wall
+			"default:stone",
+			"default:wood",
+			"default:cobble",
+		}
+		if i == 1 or i == #occupancies then
+			occupancies[i] = table.copy(occupancies[i])
+			local occup = occupancies[i]
+			local startpos
+			for k, occ in pairs(occup) do
+				if occ == 2 then
+					startpos = unhash2(k)
+					break
+				end
+			end
+			if startpos then
+				local ps, visited = flood_sf(startpos, function(p)
+					return occup[hash2(p[1], p[2])] == 1
+				end)
+				for k = 1, #ps do
+					local p = ps[k]
+					local vi = hash2(p[1], p[2])
+					local id = visited[vi]
+					occup[vi] = 3 + math.floor(id / 8) % 3
+				end
+			end
+		end
+		local nodes = {}
 		for k, occ in pairs(occupancies[i]) do
 			local v = unhash2(k)
-			local node_name = occ == 1 and inner_node or wall_node
-			minetest.set_node({x=pos.x + v[1], y = pos.y + i - 1, z = pos.z + v[2]},
-				{name=node_name})
+			local node_name = occ_to_node[occ]
+			nodes[#nodes+1] = {
+				{x=pos.x + v[1], y = pos.y + i - 1, z = pos.z + v[2]},
+				node_name
+			}
 		end
+		simple_vmanip(nodes)
 	end
 end
 

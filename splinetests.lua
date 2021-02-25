@@ -1,4 +1,6 @@
 local iter_spline = mydev.spline_voxelizing.iter_ucbspline
+local spline_triangles = mydev.spline_voxelizing.spline_triangles
+local simple_vmanip = mydev.common.simple_vmanip
 
 --[[
 --~ local gold = 0.5 * math.sqrt(5.0) - 0.5
@@ -55,6 +57,70 @@ worldedit.register_command("spli", {
 		for pos in iter_spline(spline_points) do
 			minetest.set_node(pos, {name="default:brick"})
 		end
+
+		return true
+	end,
+})
+
+worldedit.register_command("splj", {
+	description = "Test for spline surfaces",
+	privs = {worldedit=true},
+	params = "",
+	require_pos = 1,
+	func = function(playername)
+		local size = 200
+		local pos1 = worldedit.pos1[playername]
+		local pos2 = vector.add(pos1, vector.new(size, size, size))
+		local spline_points_1 = {}
+		local spline_points_2 = {}
+		local num_points = 30
+		for k = 1, num_points do
+			spline_points_1[k] = random_pos_border(pos1, pos2)
+			spline_points_2[k] = random_pos_border(pos1, pos2)
+		end
+		for k = 1, 3 do
+			spline_points_2[k] = spline_points_1[k]
+			spline_points_2[num_points+1 - k] =
+				spline_points_1[num_points+1 - k]
+		end
+		local ps = spline_triangles(spline_points_1, spline_points_2)
+		local nodes = {}
+		for k = 1, #ps do
+			nodes[k] = {ps[k], "default:stone"}
+		end
+		simple_vmanip(nodes)
+
+		return true
+	end,
+})
+
+worldedit.register_command("splj2", {
+	description = "Test for spline surfaces 2",
+	privs = {worldedit=true},
+	params = "",
+	require_pos = 1,
+	func = function(playername)
+		local size = 200
+		local size_off = 20
+		local pos1 = worldedit.pos1[playername]
+		local pos2 = vector.add(pos1, vector.new(size, size, size))
+		local offset1 = {x=size_off, y=size_off, z=size_off}
+		local offset2 = vector.multiply(offset1, -1)
+		local spline_points_1 = {}
+		local spline_points_2 = {}
+		local num_points = 30
+		for k = 1, num_points do
+			local p = random_pos_border(pos1, pos2)
+			spline_points_1[k] = p
+			spline_points_2[k] =
+				vector.add(p, random_pos_border(offset1, offset2))
+		end
+		local ps = spline_triangles(spline_points_1, spline_points_2)
+		local nodes = {}
+		for k = 1, #ps do
+			nodes[k] = {ps[k], "default:stone"}
+		end
+		simple_vmanip(nodes)
 
 		return true
 	end,

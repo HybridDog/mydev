@@ -123,4 +123,37 @@ function spline_voxelizing.iter_ucbspline(ps)
 	end
 end
 
+local pos_to_int = minetest.hash_node_position
+local int_to_pos = minetest.get_position_from_hash
+
+-- Calculates positions for a surface defined by two splies
+function spline_voxelizing.spline_triangles(ps1, ps2)
+	assert(#ps1 == #ps2)
+	local points_1 = {}
+	local points_2 = {}
+	local step = 0.1
+	for t = 0.0, #ps1 - 4.0 + (1.0 - step), step do
+		points_1[#points_1+1] = eval_spline(ps1, t)
+		points_2[#points_2+1] = eval_spline(ps2, t)
+	end
+	local occupancy = {}
+	for k = 1, #points_1-1 do
+		local samples, n = vector.triangle(points_1[k], points_2[k],
+			points_2[k+1])
+		for i = 1, n do
+			occupancy[pos_to_int(samples[i])] = true
+		end
+		samples, n = vector.triangle(points_1[k], points_2[k+1],
+			points_1[k+1])
+		for i = 1, n do
+			occupancy[pos_to_int(samples[i])] = true
+		end
+	end
+	local result = {}
+	for vi in pairs(occupancy) do
+		result[#result+1] = int_to_pos(vi)
+	end
+	return result, occupancy
+end
+
 return spline_voxelizing

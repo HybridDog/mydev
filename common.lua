@@ -89,4 +89,45 @@ function funcs.get_perlin_field(rmin, rmax, nparams)
 	return tab
 end
 
+
+-- A simple function to set nodes with vmanip instead of set_node
+-- Nodes is a list, for example {{{x=0, y=1, z=2}, "default:cobble"}}
+function funcs.simple_vmanip(nodes)
+	local num_nodes = #nodes
+	if num_nodes == 0 then
+		return
+	end
+	local minp = vector.new(nodes[1][1])
+	local maxp = vector.new(minp)
+	for i = 1, num_nodes do
+		local pos = nodes[i][1]
+		local coords = {"x", "y", "z"}
+		for k = 1, 3 do
+			local c = coords[k]
+			if pos[c] < minp[c] then
+				minp[c] = pos[c]
+			elseif pos[c] > maxp[c] then
+				maxp[c] = pos[c]
+			end
+		end
+	end
+
+	local manip = minetest.get_voxel_manip()
+	local e1, e2 = manip:read_from_map(minp, maxp)
+	local area = VoxelArea:new{MinEdge=e1, MaxEdge=e2}
+	local data = manip:get_data()
+
+	local ids = {}
+	for i = 1, num_nodes do
+		local vi = area:indexp(nodes[i][1])
+		local nodename = nodes[i][2]
+		ids[nodename] = ids[nodename] or minetest.get_content_id(nodename)
+		data[vi] = ids[nodename]
+	end
+
+	manip:set_data(data)
+	manip:write_to_map()
+end
+
+
 return funcs
