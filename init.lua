@@ -10,6 +10,7 @@ dofile(path .. "/haufnhaus.lua")
 dofile(path .. "/burgr.lua")
 dofile(path .. "/trianglesphere.lua")
 dofile(path .. "/splinetests.lua")
+dofile(path .. "/spline_caves.lua")
 
 
 -----------------------  -------------------------------------------------------

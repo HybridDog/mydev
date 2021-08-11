@@ -123,6 +123,41 @@ function spline_voxelizing.iter_ucbspline(ps)
 	end
 end
 
+-- A simple function to calculate floating point positions of an uniform cubic
+-- basis spline.
+-- Two successive points have a distance in [dist_min, dist_max]
+function spline_voxelizing.sample_ucbspline(ps, dist_min, dist_max)
+	assert(0 < dist_min and dist_min < dist_max)
+	local t_max = #ps - 4.0 + 0.9999
+	local t = 0
+	local t_delta = 0.1
+	local pos = eval_spline(ps, 0)
+	local positions = {pos}
+	while true do
+		local t_next = t + t_delta
+		local pos_next = eval_spline(ps, math.min(t_next, t_max))
+		local dist = vector.length(vector.subtract(pos, pos_next))
+		if dist < dist_min then
+			if t_next > t_max then
+				-- Time exceeded although distance is small -> finished
+				break
+			end
+			-- Distance too small, try again with a bigger time
+			t_delta = t_delta * 1.5
+		elseif dist > dist_max then
+			-- Distance too big, try again with a smaller time
+			t_delta = t_delta * 0.5
+		else
+			-- Found a valid point
+			positions[#positions+1] = pos_next
+			t = t_next
+			pos = pos_next
+		end
+	end
+	return positions
+end
+
+
 local pos_to_int = minetest.hash_node_position
 local int_to_pos = minetest.get_position_from_hash
 

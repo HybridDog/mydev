@@ -108,7 +108,7 @@ worldedit.register_command("splj2", {
 		local offset2 = vector.multiply(offset1, -1)
 		local spline_points_1 = {}
 		local spline_points_2 = {}
-		local num_points = 30
+		local num_points = 150
 		for k = 1, num_points do
 			local p = random_pos_border(pos1, pos2)
 			spline_points_1[k] = p
