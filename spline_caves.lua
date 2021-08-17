@@ -344,3 +344,138 @@ worldedit.register_command("splc", {
 		return true
 	end,
 })
+
+
+
+
+-- A table which defines the Hilbert curve recursively. The rows are ordered
+-- for offsets (x,y) in (0,0), (1,0), (0,1), (1,1) (if the offsets are unscaled)
+local hilbert_table_2d = {
+	ur = {{"ru", "u", 0}, {"ld", nil, 3}, {"ur", "r", 1}, {"ur", "d", 2}},
+	ld = {{"ld", "r", 2}, {"ur", nil, 3}, {"ld", "d", 1}, {"dl", "l", 0}},
+	dl = {{"dl", "u", 2}, {"dl", "l", 1}, {"ru", nil, 3}, {"ld", "d", 0}},
+	ru = {{"ur", "r", 0}, {"ru", "u", 1}, {"dl", nil, 3}, {"ru", "l", 2}},
+}
+
+-- Returns the outgoing direction of the (approximated) hilbert curve.
+-- (x, y) should lie within [0,1)^2 and level defines the number of valid bits
+-- after the comma of x and y.
+local function hilbert_2d_get_direction(component_prev, dir_prev, x, y, level)
+	if level == 0 then
+		return dir_prev
+	end
+	x = 2 * x
+	y = 2 * y
+	local i = 0
+	if x >= 1 then
+		i = i + 1
+		x = x - 1
+	end
+	if y >= 1 then
+		i = i + 2
+		y = y - 1
+	end
+	local data = hilbert_table_2d[component_prev][i+1]
+	return hilbert_2d_get_direction(data[1], data[2] or dir_prev,
+		x, y, level-1)
+end
+
+local HilbertCurve2D = {}
+setmetatable(HilbertCurve2D, {__call = function(_, size)
+	local num_levels = math.ceil(math.log(size) / math.log(2))
+	local obj = {
+		num_levels = num_levels,
+		directions_cache = {}
+	}
+	setmetatable(obj.directions_cache, {__mode = "kv"})
+	setmetatable(obj, HilbertCurve2D)
+	return obj
+end})
+HilbertCurve2D.__index = {
+	-- Returns a direction ("r", "l", "u" or "d") where the curve exits
+	-- at (x, y).
+	-- (x, y) should be in {0, 1, …, size-1}^2
+	get_out_direction = function(self, x, y)
+		local size = 2 ^ self.num_levels
+		assert(x >= 0 and y >= 0 and x < size and y < size)
+		local vi = y * size + x
+		local dir = self.directions_cache[vi]
+		if dir then
+			return dir
+		end
+		-- I chose the first level of the curve to go
+		-- right, up, right, down, right
+		dir = hilbert_2d_get_direction("ur", "r", x / size, y / size,
+			self.num_levels)
+		self.directions_cache[vi] = dir
+		return dir
+	end,
+
+	-- Returns a direction ("r", "l", "u" or "d") where the curve enters
+	-- and exits at (x, y).
+	-- Entering means exiting from a neighbouring position
+	get_in_and_out_direction = function(self, x, y)
+		local size = 2 ^ self.num_levels
+		local off = {l = {-1, 0}, r = {1, 0}, d = {0, -1}, u = {0, 1}}
+		local dir_out = self:get_out_direction(x, y)
+		local opposites = {r = "l", l = "r", u = "d", d = "u"}
+		for dir, vec in pairs(off) do
+			if dir ~= dir_out then
+				local xo = x + vec[1]
+				local yo = y + vec[2]
+				if xo >= 0 and yo >= 0 and xo < size and yo < size then
+					local dir_out_neigh = self:get_out_direction(xo, yo)
+					if dir_out_neigh == opposites[dir] then
+						-- Found a point which leads to (x, y)
+						return opposites[dir_out_neigh], dir_out
+					end
+				end
+			end
+		end
+		-- Rare edge case: the beginning of the curve
+		assert(x == 0 and y == 0, "Couldn't find in for (" .. x .. ", " ..
+			y .. ")")
+		-- The first level of the curve goes right, […]
+		-- -> the first input direction is left
+		return "l", dir_out
+	end,
+}
+
+-- a testing function for the hilbert 2d curve
+local function get_2d_hilbert_nodes(pos1, pos2)
+	local nodes = {}
+	local size = math.ceil(
+		math.max(pos2.x - pos1.x, pos2.y - pos1.y, pos2.z - pos1.z) / 3)
+	local hilb = HilbertCurve2D(size)
+	for i = 0, size-1 do
+		for j = 0, size-1 do
+			local dir_in, dir_out = hilb:get_in_and_out_direction(i, j)
+			local x = pos1.x + 3 * i
+			local z = pos1.z + 3 * j
+			nodes[#nodes+1] = {{x=x+1, y=pos1.y, z=z+1}, "default:mese"}
+			local off = {l = {-1, 0}, r = {1, 0}, d = {0, -1}, u = {0, 1}}
+			local vec_in = off[dir_in]
+			local vec_out = off[dir_out]
+			nodes[#nodes+1] = {{x=x+vec_in[1]+1, y=pos1.y, z=z+vec_in[2]+1},
+				"default:stone"}
+			nodes[#nodes+1] = {{x=x+vec_out[1]+1, y=pos1.y, z=z+vec_out[2]+1},
+				"default:cobble"}
+		end
+	end
+	return nodes
+end
+
+worldedit.register_command("hilb", {
+	description = "Test for hilbert curve",
+	privs = {worldedit=true},
+	params = "",
+	require_pos = 1,
+	func = function(playername)
+		local pos1 = worldedit.pos1[playername]
+		local pos2 = vector.add(pos1, 3*32)
+		local nodes = get_2d_hilbert_nodes(pos1, pos2)
+		simple_vmanip(nodes)
+
+		return true
+	end,
+})
