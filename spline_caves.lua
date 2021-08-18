@@ -404,6 +404,17 @@ do
 		return t_new
 	end
 	-- 90 degrees counterclockwise
+	local function rotx(t)
+		local t_new = {}
+		local perm = {3, 4, 7, 8, 1, 2, 5, 6}
+		for i = 1, 8 do
+			t_new[i] = t[perm[i]]
+		end
+		onallstr(t_new, function(str)
+			return strrot(str, "b", "d", "f", "u")
+		end)
+		return t_new
+	end
 	local function roty(t)
 		local t_new = {}
 		local perm = {5, 1, 7, 3, 6, 2, 8, 4}
@@ -415,18 +426,6 @@ do
 		end)
 		return t_new
 	end
-	local function rotx(t)
-		local t_new = {}
-		local perm = {3, 4, 7, 8, 1, 2, 5, 6}
-		for i = 1, 8 do
-			t_new[i] = t[perm[i]]
-		end
-		onallstr(t_new, function(str)
-			return strrot(str, "f", "d", "b", "u")
-		end)
-		return t_new
-	end
-
 	hilbert_table_3d = {
 		bru = {{"rub", "b", 0}, {"flu", "u", 3},
 			{"rdf", nil, 7}, {"flu", "b", 4},
@@ -435,16 +434,17 @@ do
 	hilbert_table_3d.flu = flipx(flipz(hilbert_table_3d.bru))
 	hilbert_table_3d.bld = flipx(flipy(hilbert_table_3d.bru))
 	hilbert_table_3d.frd = flipz(flipy(hilbert_table_3d.bru))
-	hilbert_table_3d.dbl = roty(rotx(hilbert_table_3d.bru))
-	hilbert_table_3d.ubr = flipx(flipy(hilbert_table_3d.dbl))
-	hilbert_table_3d.ufl = flipz(flipy(hilbert_table_3d.dbl))
-	hilbert_table_3d.dfr = flipz(flipx(hilbert_table_3d.dbl))
-	hilbert_table_3d.rub = rotx(roty(hilbert_table_3d.flu))
-	hilbert_table_3d.rdf = flipy(flipz(hilbert_table_3d.rub))
-	hilbert_table_3d.luf = flipx(flipz(hilbert_table_3d.rub))
-	hilbert_table_3d.ldb = flipy(flipx(hilbert_table_3d.rub))
+	-- bru -> rotx -> urf -> roty -> ubr
+	hilbert_table_3d.ubr = roty(rotx(hilbert_table_3d.bru))
+	hilbert_table_3d.dbl = flipy(flipx(hilbert_table_3d.ubr))
+	hilbert_table_3d.ufl = flipz(flipx(hilbert_table_3d.ubr))
+	hilbert_table_3d.dfr = flipz(flipy(hilbert_table_3d.ubr))
+	-- bru -> roty -> lbu -> rotx -> luf
+	hilbert_table_3d.luf = rotx(roty(hilbert_table_3d.bru))
+	hilbert_table_3d.rub = flipz(flipx(hilbert_table_3d.luf))
+	hilbert_table_3d.rdf = flipy(flipx(hilbert_table_3d.luf))
+	hilbert_table_3d.ldb = flipz(flipy(hilbert_table_3d.luf))
 end
--- TODO: what about Minetest's left-handed coordinate system?
 
 local function hilbert_3d_get_direction(component_prev, dir_prev, x, y, z,
 		level)
@@ -499,7 +499,7 @@ HilbertCurve3D.__index = {
 			return dir
 		end
 		-- I chose the first level of the curve to go bbrfublff
-		dir = hilbert_3d_get_direction("bru", "b", x / size, y / size, z / size,
+		dir = hilbert_3d_get_direction("bru", "f", x / size, y / size, z / size,
 			self.num_levels)
 		self.directions_cache[vi] = dir
 		return dir
@@ -528,10 +528,9 @@ HilbertCurve3D.__index = {
 				end
 			end
 		end
-		-- TODO: this fails
 		-- Rare edge case: the beginning of the curve
-		--~ assert(x == 0 and y == 0 and z == 0, "Couldn't find in for (" .. x ..
-			--~ ", " .. y .. ", " .. z .. ")")
+		assert(x == 0 and y == 0 and z == 0, "Couldn't find in for (" .. x ..
+			", " .. y .. ", " .. z .. ")")
 		-- The first level of the curve goes back, […]
 		-- -> the first input direction is front
 		return "f", dir_out
@@ -671,15 +670,21 @@ local function get_3d_hilbert_nodes(pos1, pos2)
 				local x = pos1.x + 3 * i
 				local y = pos1.y + 3 * j
 				local z = pos1.z + 3 * k
-				nodes[#nodes+1] = {{x=x+1, y=y+1, z=z+1}, "default:mese"}
+				--~ nodes[#nodes+1] = {{x=x+1, y=y+1, z=z+1}, "default:mese"}
+				nodes[#nodes+1] = {{x=x+1, y=y+1, z=z+1}, "default:stone"}
 				local off = {l = {-1, 0, 0}, r = {1, 0, 0}, d = {0, -1, 0},
 					u = {0, 1, 0}, f = {0, 0, -1}, b = {0, 0, 1}}
 				local vec_in = off[dir_in]
 				local vec_out = off[dir_out]
-				nodes[#nodes+1] = {{x=x+vec_in[1]+1, y=y+vec_in[2]+1,
-					z=z+vec_in[3]+1}, "default:stone"}
-				nodes[#nodes+1] = {{x=x+vec_out[1]+1, y=y+vec_out[2]+1,
-					z=z+vec_out[3]+1}, "default:cobble"}
+				if vec_in then
+					nodes[#nodes+1] = {{x=x+vec_in[1]+1, y=y+vec_in[2]+1,
+						z=z+vec_in[3]+1}, "default:stone"}
+				end
+				if vec_out then
+					nodes[#nodes+1] = {{x=x+vec_out[1]+1, y=y+vec_out[2]+1,
+						--~ z=z+vec_out[3]+1}, "default:cobble"}
+						z=z+vec_out[3]+1}, "default:stone"}
+				end
 			end
 		end
 	end
@@ -693,7 +698,7 @@ worldedit.register_command("hilb", {
 	require_pos = 1,
 	func = function(playername)
 		local pos1 = worldedit.pos1[playername]
-		local pos2 = vector.add(pos1, 3*4)
+		local pos2 = vector.add(pos1, 3*16)
 		local nodes = get_3d_hilbert_nodes(pos1, pos2)
 		simple_vmanip(nodes)
 
