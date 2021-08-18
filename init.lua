@@ -2,9 +2,10 @@ local path = minetest.get_modpath("mydev")
 local datastructures = dofile(path .. "/datastructures.lua")
 local common = dofile(path .. "/common.lua")
 local spline_voxelizing = dofile(path .. "/spline_voxelizing.lua")
+local HilbertCurve3D = dofile(path .. "/hilbert_curve.lua")
 
 mydev = {common = common, datastructures = datastructures,
-	spline_voxelizing = spline_voxelizing}
+	spline_voxelizing = spline_voxelizing, HilbertCurve3D = HilbertCurve3D}
 mydev.fill_sf = dofile(path .. "/fill_sf.lua")
 dofile(path .. "/haufnhaus.lua")
 dofile(path .. "/burgr.lua")

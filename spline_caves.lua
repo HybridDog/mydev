@@ -1,17 +1,17 @@
 local sample_ucbspline = mydev.spline_voxelizing.sample_ucbspline
 local simple_vmanip = mydev.common.simple_vmanip
 
-local function random_pos_border(pos1, pos2)
-	local r1 = math.random() > 0.5 and 1.0 or 0.0
-	local r2 = math.random()
-	local r3 = math.random()
-	local shuf = math.random(3)
+local function random_pos_border(pos1, pos2, rand)
+	local r1 = rand() > 0.5 and 1.0 or 0.0
+	local r2 = rand()
+	local r3 = rand()
+	local shuf = rand(3)
 	if shuf == 2 then
 		r1, r2 = r2, r1
 	elseif shuf == 3 then
 		r1, r3 = r3, r1
 	end
-	shuf = math.random(2)
+	shuf = rand(2)
 	if shuf == 2 then
 		r2, r3 = r3, r2
 	end
@@ -22,11 +22,11 @@ local function random_pos_border(pos1, pos2)
 	}
 end
 
--- FIXME: Make the cave generation work with mapgen:
--- * Maybe calculate B-Spline points for given points where the curve should
---   go through
--- * Decide on where the curves should lead to and how much randomness and
---   noise-like patterns should appear
+-- FIXME:
+-- * Improve performance (bottlenecks)
+-- * Use a 4D spline, the fourth dimension is the thickness
+-- * Improve spline curve behaviour on chunk boundaries
+--   (defined by hilbert curve)
 -- * Find a practical use
 
 -- A priority queue based on LightQueue from voxelalgorithms.cpp
@@ -52,6 +52,9 @@ LightQueue.__index = {
 	end,
 	next = function(self)
 		local light = self.max_light
+		if light <= 0 then
+			return
+		end
 		local n = self.num_lights[light]
 		if n == 0 then
 			if light <= 0 then
@@ -75,27 +78,27 @@ local function get_neighbours(vi, ystride, zstride, num_vis)
 		vi - zstride, vi + zstride}
 	-- Remove neighbours outside the boundaries if needed
 	local n = 6
-	if vi % ystride == 0 then
+	if vi-1 % ystride == 0 then
 		neighbours[1] = -1
 		n = n-1
 	end
-	if vi % ystride == ystride - 1 then
+	if (vi-1) % ystride == ystride - 1 then
 		neighbours[2] = -1
 		n = n-1
 	end
-	if vi % zstride < ystride then
+	if (vi-1) % zstride < ystride then
 		neighbours[3] = -1
 		n = n-1
 	end
-	if vi % zstride >= zstride - ystride then
+	if (vi-1) % zstride >= zstride - ystride then
 		neighbours[4] = -1
 		n = n-1
 	end
-	if vi < 0 then
+	if (vi-1) < zstride then
 		neighbours[5] = -1
 		n = n-1
 	end
-	if vi >= num_vis then
+	if (vi-1) >= num_vis - zstride then
 		neighbours[6] = -1
 		n = n-1
 	end
@@ -126,7 +129,7 @@ local function get_manhattan_df(pos1, pos2, points, max_dist)
 	-- Initialize the distance field
 	local num_vis = size.x * size.y * size.z
 	local df = {}
-	for k = 0, num_vis - 1 do
+	for k = 1, num_vis do
 		df[k] = max_dist
 	end
 	-- Add the points to the distance field and a priority queue
@@ -137,7 +140,7 @@ local function get_manhattan_df(pos1, pos2, points, max_dist)
 		local dist_point = 0
 		local pos_rel = vector.round(vector.subtract(points[k], minp))
 		if vector_is_bounded(pos_rel, size) then
-			local vi = pos_rel.z * zstride + pos_rel.y * ystride + pos_rel.x
+			local vi = pos_rel.z * zstride + pos_rel.y * ystride + pos_rel.x + 1
 			if df[vi] > dist_point then
 				-- No other point mapped to the same position yet.
 				df[vi] = dist_point
@@ -212,7 +215,6 @@ local function vector_ceil(pos)
 end
 
 local function get_rotated_manhattan_df(points, max_dist)
-	-- Rotate the points; FIXME: Ignore points out of bounds
 	local minp, maxp
 	local points_r = {}
 	for k = 1, #points do
@@ -230,10 +232,13 @@ local function get_rotated_manhattan_df(points, max_dist)
 end
 
 local function get_merged_df(pos1, pos2, points, max_dist)
+	assert(#points >= 1, "get_merged_df called without points")
 	local df1, minp1, maxp1 = get_manhattan_df(pos1, pos2, points, max_dist)
 	local df2, minp2, maxp2 = get_rotated_manhattan_df(points, max_dist)
 	local area1 = VoxelArea:new{MinEdge = minp1, MaxEdge = maxp1}
 	local area2 = VoxelArea:new{MinEdge = minp2, MaxEdge = maxp2}
+	assert(area2:containsp(vector.subtract(maxp2, 1)))
+	assert(df2[area2:indexp(vector.subtract(maxp2, 1))])
 	local area_main = VoxelArea:new{MinEdge = pos1, MaxEdge = pos2}
 	local df_main = {}
 	for z = pos1.z, pos2.z do
@@ -247,6 +252,14 @@ local function get_merged_df(pos1, pos2, points, max_dist)
 				local dist2
 				if area2:containsp(pos_r) then
 					dist2 = df2[area2:indexp(pos_r)]
+					if not dist2 then
+						print(dump(area2))
+						print(dump(pos_r))
+						print("index", area2:indexp(pos_r))
+						print("maxp2", dump(maxp2))
+						print("#df2", #df2)
+					end
+					assert(dist2, "Missing distance field entry")
 				else
 					dist2 = max_dist
 				end
@@ -321,7 +334,7 @@ worldedit.register_command("splc", {
 		local pos2 = vector.add(pos1, vector.new(80, 80, 80))
 		local spline_points = {}
 		for k = 1, 30 do
-			spline_points[k] = random_pos_border(pos1, pos2)
+			spline_points[k] = random_pos_border(pos1, pos2, math.random)
 		end
 		for k = 1, 3 do
 			spline_points[#spline_points+1] = spline_points[k]
@@ -345,326 +358,155 @@ worldedit.register_command("splc", {
 	end,
 })
 
-
-
-local hilbert_table_3d
-do
-	local function strreplace(str, a, b)
-		if not str then
-			return str
-		end
-		return str:gsub(a, "P"):gsub(b, a):gsub("P", b)
-	end
-	local function strrot(str, a, b, c, d)
-		if not str then
-			return str
-		end
-		return str:gsub(a, "P"):gsub(b, a):gsub(c, b):gsub(d, c):gsub("P", d)
-	end
-	local function onallstr(t, func)
-		for i = 1, #t do
-			t[i] = {func(t[i][1]), func(t[i][2]), t[i][3]}
+local function vector_inside(pos, minp, maxp)
+	for _,i in pairs({"x", "y", "z"}) do
+		if pos[i] < minp[i]
+		or pos[i] > maxp[i] then
+			return false
 		end
 	end
-	local function flipz(t)
-		local t_new = {}
-		for i = 1,4 do
-			t_new[i] = t[4 + i]
-			t_new[4 + i] = t[i]
-		end
-		for i = 1,4 do
-			t_new[i] = t[4 + i]
-			t_new[4 + i] = t[i]
-		end
-		onallstr(t_new, function(str)
-			return strreplace(str, "b", "f")
-		end)
-		return t_new
-	end
-	local function flipx(t)
-		local t_new = {}
-		for i = 1, 4 do
-			t_new[2 * i - 1] = t[2 * i]
-			t_new[2 * i] = t[2 * i - 1]
-		end
-		onallstr(t_new, function(str)
-			return strreplace(str, "r", "l")
-		end)
-		return t_new
-	end
-	local function flipy(t)
-		local t_new = {}
-		local perm = {3, 4, 1, 2, 7, 8, 5, 6}
-		for i = 1, 8 do
-			t_new[i] = t[perm[i]]
-		end
-		onallstr(t_new, function(str)
-			return strreplace(str, "u", "d")
-		end)
-		return t_new
-	end
-	-- 90 degrees counterclockwise
-	local function rotx(t)
-		local t_new = {}
-		local perm = {3, 4, 7, 8, 1, 2, 5, 6}
-		for i = 1, 8 do
-			t_new[i] = t[perm[i]]
-		end
-		onallstr(t_new, function(str)
-			return strrot(str, "b", "d", "f", "u")
-		end)
-		return t_new
-	end
-	local function roty(t)
-		local t_new = {}
-		local perm = {5, 1, 7, 3, 6, 2, 8, 4}
-		for i = 1, 8 do
-			t_new[i] = t[perm[i]]
-		end
-		onallstr(t_new, function(str)
-			return strrot(str, "l", "b", "r", "f")
-		end)
-		return t_new
-	end
-	hilbert_table_3d = {
-		bru = {{"rub", "b", 0}, {"flu", "u", 3},
-			{"rdf", nil, 7}, {"flu", "b", 4},
-			{"ubr", "r", 1}, {"ubr", "f", 2}, {"dbl", "f", 6}, {"dbl", "l", 5}},
-	}
-	hilbert_table_3d.flu = flipx(flipz(hilbert_table_3d.bru))
-	hilbert_table_3d.bld = flipx(flipy(hilbert_table_3d.bru))
-	hilbert_table_3d.frd = flipz(flipy(hilbert_table_3d.bru))
-	-- bru -> rotx -> urf -> roty -> ubr
-	hilbert_table_3d.ubr = roty(rotx(hilbert_table_3d.bru))
-	hilbert_table_3d.dbl = flipy(flipx(hilbert_table_3d.ubr))
-	hilbert_table_3d.ufl = flipz(flipx(hilbert_table_3d.ubr))
-	hilbert_table_3d.dfr = flipz(flipy(hilbert_table_3d.ubr))
-	-- bru -> roty -> lbu -> rotx -> luf
-	hilbert_table_3d.luf = rotx(roty(hilbert_table_3d.bru))
-	hilbert_table_3d.rub = flipz(flipx(hilbert_table_3d.luf))
-	hilbert_table_3d.rdf = flipy(flipx(hilbert_table_3d.luf))
-	hilbert_table_3d.ldb = flipz(flipy(hilbert_table_3d.luf))
+	return true
 end
 
-local function hilbert_3d_get_direction(component_prev, dir_prev, x, y, z,
-		level)
-	if level == 0 then
-		return dir_prev
+
+-- Removes all points outside the specified boundary
+local function filter_points(points, minp, maxp)
+	local out = {}
+	for k = 1, #points do
+		local pos = points[k]
+		if vector_inside(pos, minp, maxp) then
+			out[#out+1] = pos
+		end
 	end
-	x = 2 * x
-	y = 2 * y
-	z = 2 * z
-	local i = 0
-	if x >= 1 then
-		i = i + 1
-		x = x - 1
-	end
-	if y >= 1 then
-		i = i + 2
-		y = y - 1
-	end
-	if z >= 1 then
-		i = i + 4
-		z = z - 1
-	end
-	local data = hilbert_table_3d[component_prev][i+1]
-	return hilbert_3d_get_direction(data[1], data[2] or dir_prev,
-		x, y, z, level-1)
+	return out
 end
 
-local HilbertCurve3D = {}
-setmetatable(HilbertCurve3D, {__call = function(_, size)
-	local num_levels = math.ceil(math.log(size) / math.log(2))
-	local obj = {
-		num_levels = num_levels,
-		directions_cache = {}
-	}
-	setmetatable(obj.directions_cache, {__mode = "kv"})
-	setmetatable(obj, HilbertCurve3D)
-	return obj
-end})
-HilbertCurve3D.__index = {
-	-- Returns a direction ("r", "l", "u", "d", "b", "f") where the curve exits
-	-- at (x, y, z).
-	-- ("r", "l", "u", "d", "b", "f") stand for (+X, -X, +Y, -Y, +Z, -Z), i.e.
-	-- (right, left, up, down, backwards, forwards)
-	-- (x, y, z) should be in {0, 1, …, size-1}^3
-	get_out_direction = function(self, x, y, z)
-		local size = 2 ^ self.num_levels
-		assert(x >= 0 and y >= 0 and z >= 0
-			and x < size and y < size and z < size)
-		local vi = (z * size + y) * size + x
-		local dir = self.directions_cache[vi]
-		if dir then
-			return dir
-		end
-		-- I chose the first level of the curve to go bbrfublff
-		dir = hilbert_3d_get_direction("bru", "f", x / size, y / size, z / size,
-			self.num_levels)
-		self.directions_cache[vi] = dir
-		return dir
-	end,
+-- Returns a boundary point between two chunks where the cave can go through
+local function direction_to_point(pos1, pos2, dir)
+	local mid = vector.floor(vector.multiply(vector.add(pos1, pos2), 0.5))
+	if dir == "l" then
+		mid.x = pos1.x
+	elseif dir == "r" then
+		mid.x = pos2.x
+	elseif dir == "d" then
+		mid.y = pos1.y
+	elseif dir == "u" then
+		mid.y = pos2.y
+	elseif dir == "b" then
+		mid.z = pos2.z
+	elseif dir == "f" then
+		mid.z = pos1.z
+	end
+	return mid
+end
 
-	-- Returns a direction where the curve enters and exits at (x, y, z).
-	-- Entering means exiting from a neighbouring position
-	get_in_and_out_direction = function(self, x, y, z)
-		local size = 2 ^ self.num_levels
-		local off = {l = {-1, 0, 0}, r = {1, 0, 0}, d = {0, -1, 0},
-			u = {0, 1, 0}, f = {0, 0, -1}, b = {0, 0, 1}}
-		local dir_out = self:get_out_direction(x, y, z)
-		local opposites = {r = "l", l = "r", u = "d", d = "u", f = "b", b = "f"}
-		for dir, vec in pairs(off) do
-			if dir ~= dir_out then
-				local xo = x + vec[1]
-				local yo = y + vec[2]
-				local zo = z + vec[3]
-				if xo >= 0 and yo >= 0 and zo >= 0
-						and xo < size and yo < size and zo < size then
-					local dir_out_neigh = self:get_out_direction(xo, yo, zo)
-					if dir_out_neigh == opposites[dir] then
-						-- Found a point which leads to (x, y, z)
-						return opposites[dir_out_neigh], dir_out
-					end
+-- Returns a random number generator seeded for the chunk
+local function get_chunk_random(cx, cy, cz)
+	local vi = 2 ^ 32 * cz + 2 ^ 16 * cy + cx
+	local rand = PcgRandom(vi)
+	return function(x)
+		if x then
+			return rand:next(1, x)
+		end
+		return rand:next(0, 2 ^ 16) / 2 ^ 16
+	end
+end
+
+local cave_thickness = 10
+local cave_thickness_min = 5
+local basis_points_per_chunk = 8
+local chunk_size = 471
+-- Adds points of a B-Spline for this chunk
+local function get_spline_points_in_chunk(cx, cy, cz, dir_in, dir_out)
+	local rand = get_chunk_random(cx, cy, cz)
+	local pos1 = vector.subtract(
+		vector.multiply({x=cx, y=cy, z=cz}, chunk_size), 2 ^ 15)
+	local pos2 = vector.add(pos1, chunk_size - 1)
+	local pos_start = direction_to_point(pos1, pos2, dir_in)
+	local pos_end = direction_to_point(pos1, pos2, dir_out)
+	-- Take spline curve basis points inside this and the neighbouring chunks
+	-- but ensure that the thick cave is always inside these chunks
+	local minp = vector.subtract(pos1, chunk_size - cave_thickness)
+	local maxp = vector.add(pos2, chunk_size - cave_thickness)
+	-- Add three times the start and end points for now to ensure the curve
+	-- is connected
+	local points = {}
+	points[#points+1] = pos_start
+	points[#points+1] = pos_start
+	points[#points+1] = pos_start
+	for _ = 1, basis_points_per_chunk do
+		points[#points+1] = random_pos_border(minp, maxp, rand)
+	end
+	points[#points+1] = pos_end
+	points[#points+1] = pos_end
+	points[#points+1] = pos_end
+	return sample_ucbspline(points, 0.5, 1.1)
+end
+
+
+local hilb_global = mydev.HilbertCurve3D(2 ^ 16 / chunk_size)
+local function get_cave_nodes(minp, maxp)
+	-- Collect points from spline curves for all chunks
+	local p1 = vector.floor(vector.multiply(vector.add(minp, 2 ^ 15),
+		1.0 / chunk_size))
+	local p2 = vector_ceil(vector.multiply(vector.add(maxp, 2 ^ 15),
+		1.0 / chunk_size))
+	-- Add a slice of additional chunks on each side since the curves visit
+	-- neighbouring chunks
+	p1 = vector.subtract(p1, 1)
+	p2 = vector.add(p2, 1)
+	local points = {}
+	for cz = p1.z, p2.z do
+		for cy = p1.y, p2.y do
+			for cx = p1.x, p2.x do
+				local dir_in, dir_out =
+					hilb_global:get_in_and_out_direction(cx, cy, cz)
+				local pts = get_spline_points_in_chunk(cx, cy, cz, dir_in,
+					dir_out)
+				for k = 1, #pts do
+					points[#points+1] = pts[k]
 				end
 			end
 		end
-		-- Rare edge case: the beginning of the curve
-		assert(x == 0 and y == 0 and z == 0, "Couldn't find in for (" .. x ..
-			", " .. y .. ", " .. z .. ")")
-		-- The first level of the curve goes back, […]
-		-- -> the first input direction is front
-		return "f", dir_out
-	end,
-}
-
-
-
-
--- A table which defines the Hilbert curve recursively. The rows are ordered
--- for offsets (x,y) in (0,0), (1,0), (0,1), (1,1) (if the offsets are unscaled)
-local hilbert_table_2d = {
-	ur = {{"ru", "u", 0}, {"ld", nil, 3}, {"ur", "r", 1}, {"ur", "d", 2}},
-	ld = {{"ld", "r", 2}, {"ur", nil, 3}, {"ld", "d", 1}, {"dl", "l", 0}},
-	dl = {{"dl", "u", 2}, {"dl", "l", 1}, {"ru", nil, 3}, {"ld", "d", 0}},
-	ru = {{"ur", "r", 0}, {"ru", "u", 1}, {"dl", nil, 3}, {"ru", "l", 2}},
-}
-
--- Returns the outgoing direction of the (approximated) hilbert curve.
--- (x, y) should lie within [0,1)^2 and level defines the number of valid bits
--- after the comma of x and y.
-local function hilbert_2d_get_direction(component_prev, dir_prev, x, y, level)
-	if level == 0 then
-		return dir_prev
 	end
-	x = 2 * x
-	y = 2 * y
-	local i = 0
-	if x >= 1 then
-		i = i + 1
-		x = x - 1
+	-- Keep some points outside the boundary because of the thickness
+	points = filter_points(points, vector.subtract(minp, cave_thickness),
+		vector.add(maxp, cave_thickness))
+	if #points == 0 then
+		return {}
 	end
-	if y >= 1 then
-		i = i + 2
-		y = y - 1
-	end
-	local data = hilbert_table_2d[component_prev][i+1]
-	return hilbert_2d_get_direction(data[1], data[2] or dir_prev,
-		x, y, level-1)
-end
 
-local HilbertCurve2D = {}
-setmetatable(HilbertCurve2D, {__call = function(_, size)
-	local num_levels = math.ceil(math.log(size) / math.log(2))
-	local obj = {
-		num_levels = num_levels,
-		directions_cache = {}
-	}
-	setmetatable(obj.directions_cache, {__mode = "kv"})
-	setmetatable(obj, HilbertCurve2D)
-	return obj
-end})
-HilbertCurve2D.__index = {
-	-- Returns a direction ("r", "l", "u" or "d") where the curve exits
-	-- at (x, y).
-	-- (x, y) should be in {0, 1, …, size-1}^2
-	get_out_direction = function(self, x, y)
-		local size = 2 ^ self.num_levels
-		assert(x >= 0 and y >= 0 and x < size and y < size)
-		local vi = y * size + x
-		local dir = self.directions_cache[vi]
-		if dir then
-			return dir
-		end
-		-- I chose the first level of the curve to go
-		-- right, up, right, down, right
-		dir = hilbert_2d_get_direction("ur", "r", x / size, y / size,
-			self.num_levels)
-		self.directions_cache[vi] = dir
-		return dir
-	end,
-
-	-- Returns a direction ("r", "l", "u" or "d") where the curve enters
-	-- and exits at (x, y).
-	-- Entering means exiting from a neighbouring position
-	get_in_and_out_direction = function(self, x, y)
-		local size = 2 ^ self.num_levels
-		local off = {l = {-1, 0}, r = {1, 0}, d = {0, -1}, u = {0, 1}}
-		local dir_out = self:get_out_direction(x, y)
-		local opposites = {r = "l", l = "r", u = "d", d = "u"}
-		for dir, vec in pairs(off) do
-			if dir ~= dir_out then
-				local xo = x + vec[1]
-				local yo = y + vec[2]
-				if xo >= 0 and yo >= 0 and xo < size and yo < size then
-					local dir_out_neigh = self:get_out_direction(xo, yo)
-					if dir_out_neigh == opposites[dir] then
-						-- Found a point which leads to (x, y)
-						return opposites[dir_out_neigh], dir_out
-					end
+	-- Calculate the distance field for the points and generate the cave
+	-- additionally using the weierstrass function
+	local df = get_merged_df(minp, maxp, points, cave_thickness+1)
+	local area_df = VoxelArea:new{MinEdge = minp, MaxEdge = maxp}
+	local nodes = {}
+	for z = minp.z, maxp.z do
+		for y = minp.y, maxp.y do
+			for x = minp.x, maxp.x do
+				local dist = df[area_df:index(x, y, z)]
+				local sel = (math.floor(get_ws_value(2, x) +
+					--~ get_ws_value(3, y) + get_ws_value(2, z) + 0.5) % 5) / 5
+					get_ws_value(3, y) + get_ws_value(5, z) + 0.5) % 5) / 5
+				local distm = cave_thickness_min
+					+ (cave_thickness - cave_thickness_min) * sel
+				if dist <= distm then
+					nodes[#nodes+1] = {{x=x, y=y, z=z}, "default:cobble"}
 				end
 			end
 		end
-		-- Rare edge case: the beginning of the curve
-		assert(x == 0 and y == 0, "Couldn't find in for (" .. x .. ", " ..
-			y .. ")")
-		-- The first level of the curve goes right, […]
-		-- -> the first input direction is left
-		return "l", dir_out
-	end,
-}
-
--- a testing function for the hilbert 2d curve
---~ local function get_2d_hilbert_nodes(pos1, pos2)
-	--~ local nodes = {}
-	--~ local size = math.ceil(
-		--~ math.max(pos2.x - pos1.x, pos2.y - pos1.y, pos2.z - pos1.z) / 3)
-	--~ local hilb = HilbertCurve2D(size)
-	--~ for i = 0, size-1 do
-		--~ for j = 0, size-1 do
-			--~ local dir_in, dir_out = hilb:get_in_and_out_direction(i, j)
-			--~ local x = pos1.x + 3 * i
-			--~ local z = pos1.z + 3 * j
-			--~ nodes[#nodes+1] = {{x=x+1, y=pos1.y, z=z+1}, "default:mese"}
-			--~ local off = {l = {-1, 0}, r = {1, 0}, d = {0, -1}, u = {0, 1}}
-			--~ local vec_in = off[dir_in]
-			--~ local vec_out = off[dir_out]
-			--~ nodes[#nodes+1] = {{x=x+vec_in[1]+1, y=pos1.y, z=z+vec_in[2]+1},
-				--~ "default:stone"}
-			--~ nodes[#nodes+1] = {{x=x+vec_out[1]+1, y=pos1.y, z=z+vec_out[2]+1},
-				--~ "default:cobble"}
-		--~ end
-	--~ end
-	--~ return nodes
---~ end
+	end
+	return nodes
+end
 
 -- a testing function for the hilbert 3d curve
 local function get_3d_hilbert_nodes(pos1, pos2)
 	local nodes = {}
 	local size = math.ceil(
 		math.max(pos2.x - pos1.x, pos2.y - pos1.y, pos2.z - pos1.z) / 3)
-	local hilb = HilbertCurve3D(size)
+	local hilb = mydev.HilbertCurve3D(size)
 	for i = 0, size-1 do
-		for j = 0, size-1 do
+		for j = size-1, 0, -1 do
 			for k = 0, size-1 do
 				local dir_in, dir_out = hilb:get_in_and_out_direction(i, j, k)
 				local x = pos1.x + 3 * i
@@ -705,3 +547,30 @@ worldedit.register_command("hilb", {
 		return true
 	end,
 })
+
+--[[
+worldedit.register_command("hilbgen", {
+	description = "Test for hilbert curve",
+	privs = {worldedit=true},
+	params = "",
+	require_pos = 1,
+	func = function(playername)
+		local minp = worldedit.pos1[playername]
+		local maxp = vector.add(minp, 30)
+		local points = get_spline_points(minp, maxp)
+		for k = 1, #points do
+			local pos = points[k]
+			assert(pos.x >= minp.x and pos.x <= maxp.x and pos.y >= minp.y and pos.y <= maxp.y)
+			minetest.set_node(pos, {name="default:mese"})
+		end
+
+		return true
+	end,
+})--]]
+
+-- [[
+minetest.register_on_generated(function(minp, maxp)
+	local nodes = get_cave_nodes(minp, maxp)
+	simple_vmanip(nodes)
+end)
+--]]
