@@ -414,8 +414,8 @@ end
 
 local cave_thickness = 10
 local cave_thickness_min = 5
-local basis_points_per_chunk = 8
-local chunk_size = 471
+local basis_points_per_chunk = 3
+local chunk_size = 171
 -- Adds points of a B-Spline for this chunk
 local function get_spline_points_in_chunk(cx, cy, cz, dir_in, dir_out)
 	local rand = get_chunk_random(cx, cy, cz)
@@ -446,6 +446,7 @@ end
 
 local hilb_global = mydev.HilbertCurve3D(2 ^ 16 / chunk_size)
 local function get_cave_nodes(minp, maxp)
+	local t = minetest.get_us_time()
 	-- Collect points from spline curves for all chunks
 	local p1 = vector.floor(vector.multiply(vector.add(minp, 2 ^ 15),
 		1.0 / chunk_size))
@@ -475,10 +476,13 @@ local function get_cave_nodes(minp, maxp)
 	if #points == 0 then
 		return {}
 	end
+	print(("spline points, %.5g"):format((minetest.get_us_time() - t) / 1000000))
 
 	-- Calculate the distance field for the points and generate the cave
 	-- additionally using the weierstrass function
+	t = minetest.get_us_time()
 	local df = get_merged_df(minp, maxp, points, cave_thickness+1)
+	print(("df, %.5g"):format((minetest.get_us_time() - t) / 1000000))
 	local area_df = VoxelArea:new{MinEdge = minp, MaxEdge = maxp}
 	local nodes = {}
 	for z = minp.z, maxp.z do
@@ -568,9 +572,13 @@ worldedit.register_command("hilbgen", {
 	end,
 })--]]
 
--- [[
+--[[
 minetest.register_on_generated(function(minp, maxp)
+	local t = minetest.get_us_time()
 	local nodes = get_cave_nodes(minp, maxp)
+	print(("nodes calculated, %.5g"):format((minetest.get_us_time() - t) / 1000000))
+	t = minetest.get_us_time()
 	simple_vmanip(nodes)
+	print(("simple vmanip, %.5g"):format((minetest.get_us_time() - t) / 1000000))
 end)
 --]]
