@@ -189,4 +189,38 @@ HilbertCurve3D.__index = {
 	end,
 }
 
+-- A helper function to to along a direction
+function HilbertCurve3D.go_in_direction(x, y, z, dir)
+	local offsets = {
+		l = {-1, 0, 0},
+		r = {1, 0, 0},
+		d = {0, -1, 0},
+		u = {0, 1, 0},
+		b = {0, 0, -1},
+		f = {0, 0, 1},
+	}
+	local o = offsets[dir]
+	return x + o[1], y + o[2], z + o[3]
+end
+
+-- Get the centre position of the cuboid face along direction dir.
+-- pos1 and pos2 define the sorted cuboid boundary positions.
+function HilbertCurve3D.centre_of_face(pos1, pos2, dir)
+	local mid = vector.floor(vector.multiply(vector.add(pos1, pos2), 0.5))
+	if dir == "l" then
+		mid.x = pos1.x
+	elseif dir == "r" then
+		mid.x = pos2.x
+	elseif dir == "d" then
+		mid.y = pos1.y
+	elseif dir == "u" then
+		mid.y = pos2.y
+	elseif dir == "b" then
+		mid.z = pos2.z
+	elseif dir == "f" then
+		mid.z = pos1.z
+	end
+	return mid
+end
+
 return HilbertCurve3D

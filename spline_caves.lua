@@ -73,6 +73,9 @@ local function vector_is_bounded(pos, size)
 		and pos.x <= size.x-1 and pos.y <= size.y-1 and pos.z <= size.z-1
 end
 
+-- Get the (up to six) nearest neighbours from an integer position vi.
+-- vi and the neighbours are indices to an array and correspond to 3D
+-- coordinates.
 local function get_neighbours(vi, ystride, zstride, num_vis)
 	local neighbours = {vi - 1, vi + 1, vi - ystride, vi + ystride,
 		vi - zstride, vi + zstride}
@@ -381,25 +384,6 @@ local function filter_points(points, minp, maxp)
 	return out
 end
 
--- Returns a boundary point between two chunks where the cave can go through
-local function direction_to_point(pos1, pos2, dir)
-	local mid = vector.floor(vector.multiply(vector.add(pos1, pos2), 0.5))
-	if dir == "l" then
-		mid.x = pos1.x
-	elseif dir == "r" then
-		mid.x = pos2.x
-	elseif dir == "d" then
-		mid.y = pos1.y
-	elseif dir == "u" then
-		mid.y = pos2.y
-	elseif dir == "b" then
-		mid.z = pos2.z
-	elseif dir == "f" then
-		mid.z = pos1.z
-	end
-	return mid
-end
-
 -- Returns a random number generator seeded for the chunk
 local function get_chunk_random(cx, cy, cz)
 	local vi = 2 ^ 32 * cz + 2 ^ 16 * cy + cx
@@ -416,30 +400,46 @@ local cave_thickness = 10
 local cave_thickness_min = 5
 local basis_points_per_chunk = 3
 local chunk_size = 171
--- Adds points of a B-Spline for this chunk
-local function get_spline_points_in_chunk(cx, cy, cz, dir_in, dir_out)
+
+local function get_spline_basis_for_chunk(cx, cy, cz)
 	local rand = get_chunk_random(cx, cy, cz)
 	local pos1 = vector.subtract(
 		vector.multiply({x=cx, y=cy, z=cz}, chunk_size), 2 ^ 15)
 	local pos2 = vector.add(pos1, chunk_size - 1)
-	local pos_start = direction_to_point(pos1, pos2, dir_in)
-	local pos_end = direction_to_point(pos1, pos2, dir_out)
 	-- Take spline curve basis points inside this and the neighbouring chunks
 	-- but ensure that the thick cave is always inside these chunks
 	local minp = vector.subtract(pos1, chunk_size - cave_thickness)
 	local maxp = vector.add(pos2, chunk_size - cave_thickness)
-	-- Add three times the start and end points for now to ensure the curve
-	-- is connected
 	local points = {}
-	points[#points+1] = pos_start
-	points[#points+1] = pos_start
-	points[#points+1] = pos_start
 	for _ = 1, basis_points_per_chunk do
 		points[#points+1] = random_pos_border(minp, maxp, rand)
 	end
-	points[#points+1] = pos_end
-	points[#points+1] = pos_end
-	points[#points+1] = pos_end
+	return points
+end
+
+-- Get points from B-Splines for this chunk
+local function get_curve_point_set_for_chunk(cx, cy, cz, dir_in, dir_out)
+	-- Get the spline basis points for the previous, current and next curve
+	-- parts
+	local cxp, cyp, czp = mydev.HilbertCurve3D.go_in_direction(cx, cy, cz, dir_in)
+	local cxn, cyn, czn = mydev.HilbertCurve3D.go_in_direction(cx, cy, cz, dir_out)
+	local bpoints_p = get_spline_basis_for_chunk(cxp, cyp, czp)
+	local bpoints = get_spline_basis_for_chunk(cx, cy, cz)
+	local bpoints_n = get_spline_basis_for_chunk(cxn, cyn, czn)
+	-- Merge the basis points so that the curve goes from the previous to the
+	-- current to the next chunk
+	local points = {
+		bpoints_p[#bpoints_p-2],
+		bpoints_p[#bpoints_p-1],
+		bpoints_p[#bpoints_p]
+	}
+	for i = 1, #bpoints do
+		points[#points+1] = bpoints[i]
+	end
+	points[#points+1] = bpoints_n[1]
+	points[#points+1] = bpoints_n[2]
+	points[#points+1] = bpoints_n[3]
+	-- Convert the curve to a point set
 	return sample_ucbspline(points, 0.5, 1.1)
 end
 
@@ -462,7 +462,7 @@ local function get_cave_nodes(minp, maxp)
 			for cx = p1.x, p2.x do
 				local dir_in, dir_out =
 					hilb_global:get_in_and_out_direction(cx, cy, cz)
-				local pts = get_spline_points_in_chunk(cx, cy, cz, dir_in,
+				local pts = get_curve_point_set_for_chunk(cx, cy, cz, dir_in,
 					dir_out)
 				for k = 1, #pts do
 					points[#points+1] = pts[k]
@@ -489,9 +489,8 @@ local function get_cave_nodes(minp, maxp)
 		for y = minp.y, maxp.y do
 			for x = minp.x, maxp.x do
 				local dist = df[area_df:index(x, y, z)]
-				local sel = (math.floor(get_ws_value(2, x) +
-					--~ get_ws_value(3, y) + get_ws_value(2, z) + 0.5) % 5) / 5
-					get_ws_value(3, y) + get_ws_value(5, z) + 0.5) % 5) / 5
+				local sel = ((get_ws_value(2, x) +
+					get_ws_value(3, y) + get_ws_value(5, z)) % 5) / 5
 				local distm = cave_thickness_min
 					+ (cave_thickness - cave_thickness_min) * sel
 				if dist <= distm then
