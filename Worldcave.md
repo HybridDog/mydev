@@ -31,6 +31,7 @@ It can be summarised as follows:
     spline curve
     * The points are positioned on the surface of a cube corresponding to 3x3x3
       grid cells where the current cell is the center of this cube.
+      TODO: configurable to be inside and not on surface
     * Since the points are basis points, the corresponding curve stays inside
       the volume of the 3x3x3 cells.
       To avoid that the corresponding cave can go a bit outside of this volume

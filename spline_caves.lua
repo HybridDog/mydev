@@ -1,33 +1,57 @@
-local sample_ucbspline = mydev.spline_voxelizing.sample_ucbspline
+local sample_ucbspline_in_cuboid = mydev.spline_voxelizing.sample_ucbspline_in_cuboid
 local simple_vmanip = mydev.common.simple_vmanip
 
-local function random_pos_border(pos1, pos2, rand)
-	local r1 = rand() > 0.5 and 1.0 or 0.0
-	local r2 = rand()
-	local r3 = rand()
-	local shuf = rand(3)
-	if shuf == 2 then
-		r1, r2 = r2, r1
-	elseif shuf == 3 then
-		r1, r3 = r3, r1
+-- Settings
+local cave_thickness = 10
+local cave_thickness_min = 5
+local basis_points_per_chunk = 3
+local chunk_size = 300
+local basis_positions_on_borders = false
+local enable_mapgen = false
+	-- disabled in mydev
+
+local random_basis_point
+if basis_positions_on_borders then
+	-- Get a random position on the border of the cuboid defined by pos1 and
+	-- pos2
+	function random_basis_point(pos1, pos2, rand)
+		local r1 = rand() > 0.5 and 1.0 or 0.0
+		local r2 = rand()
+		local r3 = rand()
+		local shuf = rand(3)
+		if shuf == 2 then
+			r1, r2 = r2, r1
+		elseif shuf == 3 then
+			r1, r3 = r3, r1
+		end
+		shuf = rand(2)
+		if shuf == 2 then
+			r2, r3 = r3, r2
+		end
+		return {
+			x = r1 * pos1.x + (1 - r1) * pos2.x,
+			y = r2 * pos1.y + (1 - r2) * pos2.y,
+			z = r3 * pos1.z + (1 - r3) * pos2.z,
+		}
 	end
-	shuf = rand(2)
-	if shuf == 2 then
-		r2, r3 = r3, r2
+else
+	-- Get a random position in the cuboid defined by pos1 and pos2
+	function random_basis_point(pos1, pos2, rand)
+		local r1 = rand()
+		local r2 = rand()
+		local r3 = rand()
+		return {
+			x = r1 * pos1.x + (1 - r1) * pos2.x,
+			y = r2 * pos1.y + (1 - r2) * pos2.y,
+			z = r3 * pos1.z + (1 - r3) * pos2.z,
+		}
 	end
-	return {
-		x = r1 * pos1.x + (1 - r1) * pos2.x,
-		y = r2 * pos1.y + (1 - r2) * pos2.y,
-		z = r3 * pos1.z + (1 - r3) * pos2.z,
-	}
 end
 
 -- FIXME:
 -- * Improve performance (bottlenecks)
 -- * Use a 4D spline, the fourth dimension is the thickness
--- * Improve spline curve behaviour on chunk boundaries
---   (defined by hilbert curve)
--- * Find a practical use
+-- * Make a cave mod
 
 -- A priority queue based on LightQueue from voxelalgorithms.cpp
 local LightQueue = {}
@@ -305,6 +329,7 @@ local function get_ws_value(a, x)
 	return v
 end
 
+--[[
 -- testing function
 local function df_nodes(pos1, pos2, points, max_dist)
 	local df = get_merged_df(pos1, pos2, points, max_dist)
@@ -326,6 +351,7 @@ local function df_nodes(pos1, pos2, points, max_dist)
 	end
 	return nodes
 end
+--]]
 
 worldedit.register_command("splc", {
 	description = "Test for spline cave",
@@ -337,52 +363,41 @@ worldedit.register_command("splc", {
 		local pos2 = vector.add(pos1, vector.new(80, 80, 80))
 		local spline_points = {}
 		for k = 1, 30 do
-			spline_points[k] = random_pos_border(pos1, pos2, math.random)
+			spline_points[k] = random_basis_point(pos1, pos2, math.random)
 		end
 		for k = 1, 3 do
 			spline_points[#spline_points+1] = spline_points[k]
 		end
-		local points = sample_ucbspline(spline_points, 0.5, 1.1)
-		--[[
+		local points = sample_ucbspline_in_cuboid(spline_points, 0.5, 1.1,
+			pos1, pos2)
+		-- [[
 		-- Show the sampled points
 		local nodes = {}
 		for k = 1,#points do
+			--[[
+			local name = ({"default:brick", "default:wood", "default:mese"
+				})[points[k].e % 3 + 1]
+			assert(name)
+			local pos = vector.round(points[k])
+			nodes[k] = {pos, name}
+			--]]
 			local pos = vector.round(points[k])
 			nodes[k] = {pos, "default:brick"}
 		end
 		--]]
+		--[[
+		-- Generate the distance field
 		local max_dist = 9
 		local minp = vector.subtract(pos1, max_dist-1)
 		local maxp = vector.add(pos2, max_dist-1)
 		local nodes = df_nodes(minp, maxp, points, max_dist)
+		--]]
 		simple_vmanip(nodes)
 
 		return true
 	end,
 })
 
-local function vector_inside(pos, minp, maxp)
-	for _,i in pairs({"x", "y", "z"}) do
-		if pos[i] < minp[i]
-		or pos[i] > maxp[i] then
-			return false
-		end
-	end
-	return true
-end
-
-
--- Removes all points outside the specified boundary
-local function filter_points(points, minp, maxp)
-	local out = {}
-	for k = 1, #points do
-		local pos = points[k]
-		if vector_inside(pos, minp, maxp) then
-			out[#out+1] = pos
-		end
-	end
-	return out
-end
 
 -- Returns a random number generator seeded for the chunk
 local function get_chunk_random(cx, cy, cz)
@@ -396,10 +411,6 @@ local function get_chunk_random(cx, cy, cz)
 	end
 end
 
-local cave_thickness = 10
-local cave_thickness_min = 5
-local basis_points_per_chunk = 3
-local chunk_size = 171
 
 local function get_spline_basis_for_chunk(cx, cy, cz)
 	local rand = get_chunk_random(cx, cy, cz)
@@ -412,13 +423,15 @@ local function get_spline_basis_for_chunk(cx, cy, cz)
 	local maxp = vector.add(pos2, chunk_size - cave_thickness)
 	local points = {}
 	for _ = 1, basis_points_per_chunk do
-		points[#points+1] = random_pos_border(minp, maxp, rand)
+		points[#points+1] = random_basis_point(minp, maxp, rand)
 	end
 	return points
 end
 
--- Get points from B-Splines for this chunk
-local function get_curve_point_set_for_chunk(cx, cy, cz, dir_in, dir_out)
+-- Get points from B-Splines for this chunk.
+-- minp and maxp define a bounding cuboid outside of which samples are removed
+local function get_curve_point_set_for_chunk(cx, cy, cz, dir_in, dir_out,
+		minp, maxp)
 	-- Get the spline basis points for the previous, current and next curve
 	-- parts
 	local cxp, cyp, czp = mydev.HilbertCurve3D.go_in_direction(cx, cy, cz, dir_in)
@@ -440,7 +453,7 @@ local function get_curve_point_set_for_chunk(cx, cy, cz, dir_in, dir_out)
 	points[#points+1] = bpoints_n[2]
 	points[#points+1] = bpoints_n[3]
 	-- Convert the curve to a point set
-	return sample_ucbspline(points, 0.5, 1.1)
+	return sample_ucbspline_in_cuboid(points, 0.5, 1.1, minp, maxp)
 end
 
 
@@ -456,6 +469,8 @@ local function get_cave_nodes(minp, maxp)
 	-- neighbouring chunks
 	p1 = vector.subtract(p1, 1)
 	p2 = vector.add(p2, 1)
+	local minp_samples = vector.subtract(minp, cave_thickness)
+	local maxp_samples = vector.add(maxp, cave_thickness)
 	local points = {}
 	for cz = p1.z, p2.z do
 		for cy = p1.y, p2.y do
@@ -463,26 +478,23 @@ local function get_cave_nodes(minp, maxp)
 				local dir_in, dir_out =
 					hilb_global:get_in_and_out_direction(cx, cy, cz)
 				local pts = get_curve_point_set_for_chunk(cx, cy, cz, dir_in,
-					dir_out)
+					dir_out, minp_samples, maxp_samples)
 				for k = 1, #pts do
 					points[#points+1] = pts[k]
 				end
 			end
 		end
 	end
-	-- Keep some points outside the boundary because of the thickness
-	points = filter_points(points, vector.subtract(minp, cave_thickness),
-		vector.add(maxp, cave_thickness))
 	if #points == 0 then
 		return {}
 	end
-	print(("spline points, %.5g"):format((minetest.get_us_time() - t) / 1000000))
+	print(("Spline generation and sampling: %.5g"):format((minetest.get_us_time() - t) / 1000000))
 
 	-- Calculate the distance field for the points and generate the cave
 	-- additionally using the weierstrass function
 	t = minetest.get_us_time()
 	local df = get_merged_df(minp, maxp, points, cave_thickness+1)
-	print(("df, %.5g"):format((minetest.get_us_time() - t) / 1000000))
+	print(("Distance field calculation: %.5g"):format((minetest.get_us_time() - t) / 1000000))
 	local area_df = VoxelArea:new{MinEdge = minp, MaxEdge = maxp}
 	local nodes = {}
 	for z = minp.z, maxp.z do
@@ -494,7 +506,8 @@ local function get_cave_nodes(minp, maxp)
 				local distm = cave_thickness_min
 					+ (cave_thickness - cave_thickness_min) * sel
 				if dist <= distm then
-					nodes[#nodes+1] = {{x=x, y=y, z=z}, "default:cobble"}
+					--~ nodes[#nodes+1] = {{x=x, y=y, z=z}, "default:cobble"}
+					nodes[#nodes+1] = {{x=x, y=y, z=z}, "air"}
 				end
 			end
 		end
@@ -571,13 +584,13 @@ worldedit.register_command("hilbgen", {
 	end,
 })--]]
 
---[[
-minetest.register_on_generated(function(minp, maxp)
-	local t = minetest.get_us_time()
-	local nodes = get_cave_nodes(minp, maxp)
-	print(("nodes calculated, %.5g"):format((minetest.get_us_time() - t) / 1000000))
-	t = minetest.get_us_time()
-	simple_vmanip(nodes)
-	print(("simple vmanip, %.5g"):format((minetest.get_us_time() - t) / 1000000))
-end)
---]]
+if enable_mapgen then
+	minetest.register_on_generated(function(minp, maxp)
+		local t = minetest.get_us_time()
+		local nodes = get_cave_nodes(minp, maxp)
+		print(("Overall cave node calculation: %.5g"):format((minetest.get_us_time() - t) / 1000000))
+		t = minetest.get_us_time()
+		simple_vmanip(nodes)
+		print(("vmanip node setting: %.5g"):format((minetest.get_us_time() - t) / 1000000))
+	end)
+end
