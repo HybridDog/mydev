@@ -12,6 +12,7 @@ dofile(path .. "/burgr.lua")
 dofile(path .. "/trianglesphere.lua")
 dofile(path .. "/splinetests.lua")
 dofile(path .. "/spline_caves.lua")
+dofile(path .. "/greedy_spline_tube.lua")
 dofile(path .. "/formspec_test.lua")
 
 
@@ -68,3 +69,25 @@ minetest.override_item("default:wood", {
         --~ ]])
     --~ end,
 --~ })
+
+
+--~ minetest.register_globalstep(function(dtime)
+	--~ print(dtime)
+	--~ local t0 = minetest.get_us_time()
+	--~ while minetest.get_us_time() - t0 < 0.09 * 1000000 do
+		--~ local x = 0
+	--~ end
+--~ end)
+
+
+--[[
+-- Test code for pointed thing detail printing
+minetest.override_item("default:wood", {
+	tiles = {"default_wood.png", "default_brick.png"},
+	node_placement_prediction = "default:stone",
+	node_dig_prediction = "default:cobble",
+	on_place = function(_,_, pt)
+		minetest.chat_send_all(dump(pt))
+	end,
+})
+--]]
