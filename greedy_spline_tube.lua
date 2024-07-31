@@ -61,7 +61,7 @@ Kurve.__index = {
 
 -- Offset vectors for node face touching, edge touching (including face)
 -- and corner touching (including edge and face)
---~ local offsets_face = {}
+local offsets_face = {}
 --~ local offsets_edge = {}
 local offsets_corner = {}
 for z = -1, 1 do
@@ -71,12 +71,12 @@ for z = -1, 1 do
 			if dist_manhattan ~= 0 then
 				local off = vector.new(x, y, z)
 				offsets_corner[#offsets_corner+1] = off
-				--~ if dist_manhattan <= 2 then
+				if dist_manhattan <= 2 then
 					--~ offsets_edge[#offsets_edge+1] = off
-					--~ if dist_manhattan == 1 then
-						--~ offsets_face[#offsets_face+1] = off
-					--~ end
-				--~ end
+					if dist_manhattan == 1 then
+						offsets_face[#offsets_face+1] = off
+					end
+				end
 			end
 		end
 	end
@@ -102,6 +102,15 @@ end
 
 -- Check if pos is visually redundant according with the existing positions in
 -- occupant_positions
+local function adds_redundant_thickness(_, curve, radius, pos)
+	for i = 1, #offsets_face do
+		local dist_neighbour = curve:distance_to_curve(pos + offsets_face[i])
+		if dist_neighbour < radius then
+			return false
+		end
+	end
+	return true
+end
 --~ local function adds_redundant_thickness(occupant_positions, curve, radius, pos)
 	--~ for i = 1, #diagonal_neighbour_pairs do
 		--~ local offs = diagonal_neighbour_pairs[i]
@@ -138,15 +147,16 @@ local function get_score(curve, radius, occupant_positions, pos_prev, pos)
 		score1 = score1 + 16
 	end
 	local orthogonal_distance = curve:distance_to_curve(pos)
-	if math.abs(orthogonal_distance - radius) <= 0.578 then
-		-- We must not have a too small or big radius
+	if orthogonal_distance >= radius then
+		-- We must not have a too small radius
 		score1 = score1 + 8
 	end
-	--~ if not adds_redundant_thickness(occupant_positions, curve, radius, pos) then
-		--~ -- pos does not add unnecessary thickness to the tube.
-		--~ -- This case ensures that the tube is as thin as possible.
-		--~ score1 = score1 + 4
-	--~ end
+	if not adds_redundant_thickness(occupant_positions, curve, radius, pos) then
+		-- pos does not add unnecessary thickness to the tube.
+		-- This case ensures that the tube is as thin as possible and does not
+		-- have a too large radius.
+		score1 = score1 + 4
+	end
 	local vi = minetest.hash_node_position(pos)
 	if not occupant_positions[vi] then
 		-- pos is already in the collected list of tube positions.
@@ -219,6 +229,7 @@ local function sample_tube(curve, radius)
 			end
 		end
 	end
+	minetest.chat_send_all("no early termination!!!")
 	return ps, ps_occ
 end
 
@@ -244,7 +255,9 @@ worldedit.register_command("gst", {
 		--~ local pos = curve:project_to_curve_pos(ppos)
 		--~ pos = vector.round(pos)
 		--~ minetest.set_node(pos, {name="default:cobble"})
+		local t0 = minetest.get_us_time()
 		local ps, _ = sample_tube(curve, 6)
+		minetest.chat_send_all(("sampled %d position after %.5g s"):format(#ps, (minetest.get_us_time() - t0) / 1000000))
 		for i = 1, #ps do
 			minetest.set_node(ps[i], {name="default:cobble"})
 		end
