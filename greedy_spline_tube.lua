@@ -2,7 +2,9 @@
 -- https://forum.minetest.net/viewtopic.php?p=435795#p435795
 -- There is no splines yet.
 
--- TODO: replace this dummy with an actual spline
+-- A line segment acting as a substitution of an arbitrary curve for development
+-- purposes
+-- FIXME: replace this dummy with an actual spline
 local Kurve = {}
 setmetatable(Kurve, {__call = function(_, pos1, pos2)
 	local obj = {
@@ -82,27 +84,9 @@ for z = -1, 1 do
 	end
 end
 
--- Pairs of offset vectors.
--- With these it is possible to check if a node at a position is visually
--- redundant if there are already nodes at the two positions offset by the
--- offset vectors in the pair.
---~ local diagonal_neighbour_pairs = {}
---~ for o = 1, #offsets_face do
-	--~ local off = offsets_face[o]
-	--~ for o2 = o+1, #offsets_face do
-		--~ local off2 = offsets_face[o2]
-		--~ local diff = off2 - off
-		--~ if math.abs(diff.x) < 2
-		--~ and math.abs(diff.y) < 2
-		--~ and math.abs(diff.z) < 2 then
-			--~ diagonal_neighbour_pairs[#diagonal_neighbour_pairs+1] = {off, off2}
-		--~ end
-	--~ end
---~ end
-
--- Check if pos is visually redundant according with the existing positions in
--- occupant_positions
-local function adds_redundant_thickness(_, curve, radius, pos)
+-- Check if we can omit pos from the collected positions to make the tube
+-- thinner without introducing holes
+local function adds_redundant_thickness(curve, radius, pos)
 	for i = 1, #offsets_face do
 		local dist_neighbour = curve:distance_to_curve(pos + offsets_face[i])
 		if dist_neighbour < radius then
@@ -111,17 +95,6 @@ local function adds_redundant_thickness(_, curve, radius, pos)
 	end
 	return true
 end
---~ local function adds_redundant_thickness(occupant_positions, curve, radius, pos)
-	--~ for i = 1, #diagonal_neighbour_pairs do
-		--~ local offs = diagonal_neighbour_pairs[i]
-		--~ local vi1 = minetest.hash_node_position(pos + offs[1])
-		--~ local vi2 = minetest.hash_node_position(pos + offs[2])
-		--~ if occupant_positions[vi1] and occupant_positions[vi2] then
-			--~ return true
-		--~ end
-	--~ end
-	--~ return false
---~ end
 
 -- Test which one of the scores is better.
 -- positive: s2 is better
@@ -151,7 +124,7 @@ local function get_score(curve, radius, occupant_positions, pos_prev, pos)
 		-- We must not have a too small radius
 		score1 = score1 + 8
 	end
-	if not adds_redundant_thickness(occupant_positions, curve, radius, pos) then
+	if not adds_redundant_thickness(curve, radius, pos) then
 		-- pos does not add unnecessary thickness to the tube.
 		-- This case ensures that the tube is as thin as possible and does not
 		-- have a too large radius.
@@ -166,18 +139,15 @@ local function get_score(curve, radius, occupant_positions, pos_prev, pos)
 	local angle = curve:get_rotation(pos_prev, pos)
 	if angle > 0 then
 		-- pos does not follow the spiral in the wrong direction orthogonally to
-		-- the linear spline.
-		-- This case ensures that the position selection circles around and does
-		-- not get stuck in local minima.
+		-- the curve.
+		-- This case should ensures that the position selection circles around
+		-- and does not get stuck in local minima.
 		score1 = score1 + 1
 	end
 	-- Prefer points which go less far when projected onto the curve.
 	-- This ensures that the tube is as thick as needed and does not consist of
 	-- a line.
 	local score2 = -travel_distance
-	--~ local travel_distance_prev = curve:project_to_curve(pos_prev)
-	--~ local travel_distance_rel = travel_distance - travel_distance_prev
-	--~ local score2 = -math.abs(travel_distance_rel)
 	-- Prefer points which are close to the tube radius.
 	-- This case steers the position selection to adhere to the tube radius.
 	local score3 = -math.abs(orthogonal_distance - radius)
@@ -195,6 +165,8 @@ local function get_start_point(curve, radius)
 		vector.normalize(vector.cross(tangent, some_vector)) * radius)
 end
 
+-- Voxelize a tube with the given radius around the given curve.
+-- The returned positions are ordered such that they spiral around the curve.
 local function sample_tube(curve, radius)
 	local ps = {}
 	local ps_occ = {}
@@ -221,7 +193,6 @@ local function sample_tube(curve, radius)
 			and curve:project_to_curve(pos_current) < curve_length then
 				ps_occ[vi] = true
 				ps[#ps+1] = pos_current
-				--~ print(dump(pos_current), dump(score_best))
 				break
 			end
 			if i == 4 * radius * radius then
@@ -247,19 +218,22 @@ worldedit.register_command("gst", {
 		if not player then
 			return
 		end
-		--~ local ppos = player:get_pos()
-		--~ local p1 = pos1 + vector.new(0,3,0)
-		--~ minetest.set_node(p1, {name="default:stone"})
-		--~ minetest.chat_send_all(curve:get_rotation(p1, ppos))
-		--~ minetest.chat_send_all(curve:project_to_curve(ppos))
-		--~ local pos = curve:project_to_curve_pos(ppos)
-		--~ pos = vector.round(pos)
-		--~ minetest.set_node(pos, {name="default:cobble"})
 		local t0 = minetest.get_us_time()
-		local ps, _ = sample_tube(curve, 6)
-		minetest.chat_send_all(("sampled %d position after %.5g s"):format(#ps, (minetest.get_us_time() - t0) / 1000000))
+		local radius = 6
+		local ps, _ = sample_tube(curve, radius)
+		minetest.chat_send_all(("sampled %d positions after %.5g s"):format(#ps, (minetest.get_us_time() - t0) / 1000000))
+		-- discrete circumference approximation
+		local dca = 8 * radius / math.sqrt(2) + 3
 		for i = 1, #ps do
-			minetest.set_node(ps[i], {name="default:cobble"})
+			local node_name = "default:cobble"
+			if i % (4 * dca) < dca then
+				node_name = "default:wood"
+			elseif i % (4 * dca) < 2 * dca then
+				node_name = "default:mese"
+			elseif i % (4 * dca) < 3 * dca then
+				node_name = "default:stone"
+			end
+			minetest.set_node(ps[i], {name=node_name})
 		end
 		return true
 	end,
